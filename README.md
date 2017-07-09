@@ -12,3 +12,4 @@
 ### Solution
 
 * [Lab 1: MapReduce](Solution/1.md)
+* [Lab 2: Primary/Backup Key/Value Service](Solution/2.md)
