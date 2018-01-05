@@ -1,0 +1,121 @@
+VMware FT FAQ
+Q: The introduction says that it is more difficult to ensure
+deterministic execution on physical servers than on VMs. Why is this
+the case?
+
+A: Ensuring determinism is easier on a VM because the hypervisor
+essentially emulates all aspects of the hardware, including all
+potential sources of non-determinism such as interrupt timing.
+
+Q: Both GFS and VMware FT provide fault tolerance. How should we
+think about when one or the other is better?
+
+A: FT replicates computation; you can use it to transparently add
+fault-tolerance to any existing network server. FT provides fairly
+strict consistency and is transparent to server and client. You might
+use FT to take an existing mail server, for example, and make it
+fault-tolerant. GFS, in contrast, provides fault-tolerance just for
+storage. Because GFS is specialized to a specific simple service
+(storage), its replication is more efficient than FT. For example, GFS
+does not need to cause interrupts to happen at exactly the same
+instruction on all replicas. GFS is usually only one piece of a larger
+system to implement complete fault-tolerant services. For example,
+VMware FT itself relies on a fault-tolerant storage service shared by
+primary and backup (the Shared Disk in Figure 1), which you could use
+something like GFS to implement (though at a detailed level GFS
+wouldn't be quite the right thing for FT).
+
+Q: How do Section 3.4's bounce buffers help avoid races?
+
+A: While the I/O is in progress the bounce buffer is private to the
+I/O system. The guest OS won't see any changes to its memory while the
+DMA is in progress. When the I/O completes, the monitor swaps the
+bounce buffer into the guest OS's address space. Thus, it is
+impossible for the guest OS to observe partially-completed DMA.
+Furthermore, because the monitor logs input and output events, the
+backup monitor will swap in the buffer at the exact same point in
+execution as the primary.
+
+Q: What is "an atomic test-and-set operation on the shared storage"?
+
+A: It means that a machine can read a disk block and write it in a
+single atomic operation. If two machines call this operation, then
+their two read+write cycles won't be intermingled, but instead one
+machine will execute its read+write followed by the read+write of the
+other machine.
+
+Q: How much performance is lost by following the Output Rule?
+
+A: Table 2 provides some insight. By following the output rule, the
+transmit rate is reduced, but not hugely. The receive bandwidth,
+however, is significantly reduced but that is because the incoming
+packets result in lots of traffic on the logging channel.
+
+Q: What if the application calls a random number generator? Won't that
+yield different results on primary and backup and cause the executions
+to diverge?
+
+A: The primary and backup will get the same number from their random
+number generators. All the sources of randomness are controlled by the
+hypervisor; the VMs run exactly the same code. For example, if the VMs
+read the physical time from a clock chip, the hypervisor will see that
+read and make sure the read on the backup gets the same value as on
+the primary. The virtual CPU load on the primary and backup should be
+the same, since they execute the same instructions and are idle for
+the same virtual time.
+
+Q: How were the creators certain that they captured all possible forms
+of non-determinism?
+
+A: My guess is as follows. The authors work at a company where many
+people understand VM monitors, microprocessors, and internals of guest
+OSes well, and will be aware of many of the pitfalls. For VM-FT
+specifically, the authors leverage the log and replay support from a
+previous a project (deterministic replay), which must have already
+dealt with sources of non-determinism. I assume the designers of
+deterministic replay did extensive testing and gained much experience
+with sources of non-determinism that authors of VM-FT leverage.
+
+Q: What happens if the primary fails just after it sends output to the
+external world?
+
+A: The output may happen twice: once at the primary and once at the
+backup. This duplication is not a problem for network and disk I/O. If
+the output is a network packet, then the receiving client's TCP
+software will discard the duplicate automatically. If the output event
+is a disk I/O, disk I/Os are idempotent (both write the same data to
+the same location, and there are no intervening I/Os).
+
+Q: Section 3.4 talks about disk I/Os that are outstanding on the
+primary when a failure happens; it says "Instead, we re-issue the
+pending I/Os during the go-live process of the backup VM." Where are
+the pending I/Os located/stored, and how far back does the re-issuing
+need to go?
+
+A: The paper is talking about disk I/Os for which there is a log entry
+indicating the I/O was started but no entry indicating completion.
+These are the I/O operations that must be re-started on the backup.
+When an I/O completes, the I/O device generates an I/O completion
+interrupt. So, if the I/O completion interrupt is missing in the log,
+then the backup restarts the I/O. If there is an I/O completion
+interrupt in the log, then there is no need to restart the I/O.
+
+Q: How secure is this system?
+
+A: The authors assume that the primary and backup follow the protocol
+and are not malicious (e.g., an attacker didn't compromise the
+hypervisors). The system cannot handle compromised hypervisors. On the
+other hand, the hypervisor can probably defend itself against
+malicious or buggy guest operating systems and applications.
+
+Q: Is it reasonable to address only the fail-stop failures? What are
+other type of failures?
+
+A: It is reasonable, since many real-world failures are essentially
+fail-stop, for example many network and power failures. Doing better
+than this requires coping with computers that appear to be operating
+correctly but actually compute incorrect results; in the worst case,
+perhaps the failure is the result of a malicious attacker. This larger
+class of non-fail-stop failures is often called "Byzantine". There are
+ways to deal with Byzantine failures, which we'll touch on at the end
+of the course, but most of 6.824 is about fail-stop failures.
