@@ -28,4 +28,4 @@
 
 ### [2017](http://nil.csail.mit.edu/6.824/2017/)
 #### Solution
-* [Lab 1: MapReduce](2017/Solution/1.md)
+* [Lab 1: MapReduce](2017/Solution/lab1.md)
