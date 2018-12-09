@@ -1,0 +1,947 @@
+> Raft seems a lot more understandable and simpler than alternatives (Paxos,
+> Viewstamped Replication) mentioned in the paper, with fewer possible states to
+> consider. What are the tradeoffs Raft pays for this simplicity?
+
+Raft gives up some performance in return for clarity; for example:
+
+* Every operation must be written to disk for persistence; performance
+  probably requires batching many operations into each disk write.
+
+* There can only usefully be a single AppendEntries in flight from the
+  leader to each follower: followers reject out-of-order
+  AppendEntries, and the sender's nextIndex[] mechanism requires
+  one-at-a-time. A provision for pipelining many AppendEntries would
+  be better.
+
+* The snapshotting design is only practical for relatively small
+  states, since it writes the entire state to disk. If the state is
+  big (e.g. if it's a big database), you'd want a way to write just
+  parts of the state that have changed recently.
+
+* Similarly, bringing recovering replicas up to date by sending them a
+  complete snapshot will be slow, needlessly so if the replica already
+  had an old snapshot.
+
+* Servers may not be able to take much advantage of multi-core because
+  operations must be executed one at a time (in log order).
+
+All of these could be fixed by modifying Raft, but the result would
+likely have less value as a tutorial introduction.
+
+> Is raft used in real-world software, or do companies generally roll
+> their own flavor of Paxos (or use a different consensus protocol)?
+
+Raft is pretty new, so there hasn't been much time for people to design
+new systems based on it. Most of the state-machine replication systems I
+hear about are based on the older Multi-Paxos and Viewstamped
+Replication protocols.
+
+> How did RAFT designers design the system to be as efficient as Paxos
+> while maintaining learnability? Were the hard-to-learn portions of
+> Paxos simply a result of semantics?
+
+There is a protocol called Paxos that allows a set of servers to agree
+on a single value. While Paxos requires some thought to understand, it
+is far simpler than Raft. But Paxos solves a much smaller problem than
+Raft. Here's an easy-to-read paper about Paxos:
+
+  http://css.csail.mit.edu/6.824/2014/papers/paxos-simple.pdf
+
+To build a real-world replicated service, the replicas need to agree on
+an indefinite sequence of values (the client commands), and they need
+ways to efficiently recover when servers crash and restart or miss
+messages. People have built such systems with Paxos as the starting
+point; look up Google's Chubby and Paxos Made Live papers, and
+ZooKeeper/ZAB. There is also a protocol called Viewstamped Replication;
+it's a good design, and similar to Raft, but the paper about it is hard
+to understand.
+
+These real-world protocols are complex, and (before Raft) there was not
+a good introductory paper describing how they work. The Raft paper, in
+contrast, is relatively easy to read. That's a big contribution.
+
+Whether the Raft protocol is inherently easier to understand is not
+clear. The issue is clouded by a lack of good descriptions of other
+real-world protocols. In addition, Raft sacrifices performance for
+clarity in a number of ways; that's fine for a tutorial but not always
+desirable in a real-world protocol.
+
+> How long had Paxos existed before the authors created Raft? How
+> widespread is Raft's usage in production now?
+
+Paxos was invented in the late 1980s. Raft was developed in roughly
+2012, over 20 years after Paxos.
+
+Raft closely resembles a protocol called Viewstamped Replication,
+originally published in 1988. There were replicated fault-tolerant file
+servers built on top of Viewstamped Replication in the early 1990s,
+though not in production use.
+
+I know of a bunch of real-world systems that are derived from Paxos:
+Chubby, Spanner, Megastore, and Zookeeper/ZAB. Starting in the early or
+mid-2000s big web sites and cloud providers needed fault-tolerant
+services, and Paxos was more or less re-discovered at that time and put
+into wide production use.
+
+There are several real-world users of Raft: Docker
+(https://docs.docker.com/engine/swnarm/raft/) and etcd (https://etcd.io). Others
+systems said to be using Raft include CockroachDB, RethinkDB, and TiKV, but
+doubtless there are others. Maybe you can find others starting at
+http://raft.github.io/
+
+> How does Raft's performance compare to Paxos in real-world applications?
+
+The fastest Paxos-derived protocols are probably much faster than Raft; have a
+look at ZAB/ZooKeeper and Paxos Made Live. But I suspect at the expense of
+making it more complex one could evolve Raft to have very good performance.
+Etcdv3 etcd3 claim to have achieved better performance than zookeeper and many
+paxos based implementations (https://www.youtube.com/watch?v=hQigKX0MxPw).
+
+> Is it becoming more popular to design algorithms for
+> understandability, or is Raft a special case?
+
+It's rare to see a research paper published where the main contribution
+is clarity.
+
+> How did the authors come up with such a system with these precise
+> rules? Did they start with a simple one, and then gradually refine it,
+> adding rules to address violations of properties as they came up? Or
+> did they start with some overarching model for how such systems should
+> work (and then refine it iteratively)?
+
+I don't know.
+
+Raft's design is similar to existing practice, going back to the
+Viewstamped Replication protocol published in 1988. Randomized leader
+election dates back to at least the early 1970s. So there was long
+tradition of design and engineering for them to draw on if they wanted
+to.
+
+For the details, perhaps they had some kind of iterative process in
+which they cycled through design, implementataion or simulation,
+debugging of problems, and then changes to the design. Or perhaps drove
+the refinement by trying to prove correctness rather than by testing.
+
+> Why are we learning/implementing Raft instead of Paxos?
+
+We're using Raft in 6.824 because there is a paper that clearly
+describes how to build a complete replicated server system using Raft. I
+know of no satisfactory paper that describes how to build a complete
+replicated server system based on Paxos.
+
+> The paper says that Paxos implementations for real problems have to be
+> changed significantly from the correctness-proved version of Paxos,
+> but that this is less true for Raft because Raft is easier to
+> understand and therefore easier to apply to real distributed consensus
+> applications. Presumably, some changes still need to be made when Raft
+> is applied in real systems. What kinds of changes are those? Are any
+> of the rules ever relaxed, maybe because simplicity is worth
+> sacrificing correctness in rare border cases? Or are changes to the
+> architecture made? I’m also not sure what kinds of changes
+> the paper was talking about when it said significant changes have to
+> be made to Paxos in real applications, and I’m curious how
+> that parallels Raft.
+
+In the case of Paxos, the original Paxos was not a replicated state
+machine system; it only performed a single agreement. So everyone who
+used it as the basis for replication had to invent a way to use it to
+agree to a sequence of client commands. It turns out if you want
+efficiency, you need a leader as well, so most serious uses of Paxos
+also had to add algorithms to elect and use a leader. Similarly for
+efficient schemes to bring lagging replicas up to date, to checkpoint
+and restore service state, to serve read-only operations without having
+to add log entires, to change the set of servers in the replica
+group, and to detect re-sent client requests and execute them only once.
+
+Raft already has all of these features. Perhaps there are things that
+real-world uses still need to change about Raft, but likely not nearly
+as many as for Paxos-based systems.
+
+> What are the big differences/advantages/disadvantages between the two?
+
+Raft's design is pretty close to many designs based on Paxos. There are
+a couple of ways in which Raft sacrifices performance to gain
+simplicity. Raft doesn't pipeline/overlap successive operations. It
+doesn't have particularly efficient ways to bring lagging follower up to
+date quickly, or to persist Raft state to disk. Raft's snapshotting is
+OK for tiny states but very slow for a service with a large state. It is
+too bad the Raft paper doesn't include a serious performance evaluation
+that would help us understand how much all this matters for performance.
+
+
+> 1) Are there any good resources to gain a quick idea of what Paxos is?
+>    It seems like that would be useful as context for the Raft system.
+
+Here's an introduction:
+
+  http://css.csail.mit.edu/6.824/2014/papers/paxos-simple.pdf
+
+And here's a recorded lecture of Paxos extended to be comparable to Raft:
+
+  https://www.youtube.com/watch?v=JEpsBg0AO6o
+
+> 2) Are there systems like Raft that can survive and continue to
+>    operate (commit new log entries) when only a minority of the
+>    cluster is active? If so, how, and if not, is it provably
+>    impossible to have such a system?
+
+Not with Raft's properties. But you can do it with different
+assumptions, or different client-visible semantics. The basic problem is
+split-brain -- the possibility of more than one server thinking it is
+the leader. There are two approaches that I know of.
+
+If somehow clients and servers can learn exactly which servers are live
+and which are dead (as opposed to live but partitioned by network
+failure), then one can build a system that can function as long as one
+is alive, picking (say) the lowest-numbered server known to be alive.
+However, it's hard for one computer to decide if another computer is
+dead, as opposed to the network losing the messages between them. One
+way to do it is to have a human decide -- the human can inspect each
+server and decide which are alive and dead. This is probably how GFS
+decides when the master is dead and it should switch to a backup.
+
+The other approach is to allow split-brain operation, and to have a way
+for servers to reconcile the resulting diverging state after partitions
+are healed. This can be made to work for some kinds of services, but has
+complex client-visible semantics (usually called "eventual
+consistency"). Have a look at the Bayou and Dynamo papers which are
+assigned later in the course.
+
+> One of the invariants that is implicitly assumed in raft is, that the
+> total number of servers are constant. This posses an extra requirement
+> that atleast half of these servers must be alive for the system to
+> function. Is there a way where one can get rid of this requirement?
+
+The problem here is split-brain -- the possibility of more than one
+server thinking it is the leader. There are two approaches that I know
+of.
+
+If somehow clients and servers can learn exactly which servers are live
+and which are dead (as opposed to live but partitioned by network
+failure), then one can build a system that can function as long as one
+is alive, picking (say) the lowest-numbered server known to be alive.
+However, it's hard for one computer to decide if another computer is
+dead, as opposed to the network losing the messages between them. One
+way to do it is to have a human decide -- the human can inspect each
+server and decide which are alive and dead. This is probably how GFS
+decides when the master is dead and it should switch to a backup.
+
+The other approach is to allow split-brain operation, and to have a way
+for servers to reconcile the resulting diverging state after partitions
+are healed. This can be made to work for some kinds of services, but has
+complex client-visible semantics (usually called "eventual
+consistency"). Have a look at the Bayou and Dynamo papers which are
+assigned later in the course.
+
+> In Raft, the service which is being replicated is
+> not available to the clients during an election process.
+> In practice how much of a problem does this cause?
+
+The client-visible pause seems likely to be on the order of a tenth of a
+second. The authors expect failures (and thus elections) to be rare,
+since they only happen if machines or the network fails. Many servers
+and networks stay up continuously for months or even years at a time, so
+this doesn't seem like a huge problem for many applications.
+
+> Are there other concensus systems that don't have any downtime?
+
+There are versions of Paxos-based replication that do not have a leader
+or elections, and thus don't suffer from pauses during elections.
+Instead, any server can effectively act as leader at any time. The cost
+of not having a leader is that more messages are required for each
+agreement.
+
+> How are Raft and VMware FT related? What are the major differences and their
+> implications?
+
+VM-FT can replicate any virtual machine guest, and thus any server-style
+software. Raft can only replicate software designed specifically for replication
+for Raft. On the other hand, VM-FT punts a critical decision to the test-and-set
+feature of the shared disk -- if the shared disk fails, VM-FT won't work. Raft
+would be a good way to build a fault-tolerant shared disk.
+
+> Why would I use VM-FT instead of Raft?
+
+If you had some existing software you wanted to replicate but didn't
+want to go to the effort of making it work with Raft.
+
+
+> What is the best way to protect the RAFT system against having a
+> machine taken over by adversaries, becoming a leader and than putting
+> damage on the stored information?
+
+You're right that Raft doesn't have any defense against attacks like
+this. It assumes that all participants are following the protocol, and
+that only the correct set of servers is participating.
+
+A real deployment would have to do better than this. The most
+straightforward option is to place the servers behind a firewall to
+filter out packets from random people on the Internet, and to ensure
+that all computers and people inside the firewall are trustworthy.
+
+There may be situations where Raft has to operate on the same network as
+potential attackers. In that case a good plan would be to authenticate
+the Raft packets with some cryptographic scheme. For example, give each
+legitimate Raft server a public/private key pair, have it sign all the
+packets it sends, give each server a list of the public keys of
+legitimate Raft servers, and have the servers ignore packets that aren't
+signed by a key on that list.
+
+> The paper mentions that Raft works under all non-Byzantine conditions.
+> What are Byzantine conditions and why could they make Raft fail?
+
+The paper's "non-Byzantine conditions" refers to situations where the
+server software and hardware either work correctly or simply stop
+executing, and where the network may lose, delay, or re-order messages.
+The paper says that Raft is safe under these conditions. For example,
+most power failures are non-Byzantine because they cause computers to
+simply stop executing instructions; if a power failure occurs, Raft may
+stop operating, but it won't send incorrect results to clients.
+
+Any failure other than those mentioned above is called a Byzantine
+failure. For example, if the Raft software on the servers has bugs that
+cause it to not follow the Raft protocol correctly. Or if the CPU
+executes instructions incorrectly (e.g. adds 100 plus 100 and gets 201).
+Or if attackers break into one of the servers and modify its Raft
+software or stored state, or if attackers forge RPCs from/to Raft
+servers. If a failure like this occurs, Raft may send incorrect results
+to clients.
+
+Most of 6.824 is about tolerating non-Byzantine faults. Correct
+operation despite Byzantine faults is more difficult; we'll touch on
+this topic at the end of the term.
+
+> In figure 1, what does the interface between client and server look
+> like?
+
+Typically an RPC interface to the server. For a key/value storage server
+such as you'll build in Lab 3, it's Put(key,value) and Get(value) RPCs.
+The RPCs are handled by a key/value module in the server, which calls
+Raft.Start() to ask Raft to put a client RPC in the log, and reads the
+applyCh to learn of newly committed log entries.
+
+> Will the client send the same request more than once in case
+> there is a failure?
+
+Yes.
+
+> Will the client send multiple requests in an async way?
+
+It depends on whether the software supports that. For the lab system,
+no. For a more industrial strength system, maybe yes.
+
+> One thing I don't quite understand is that, when the leader receives a
+> request from the client, then this server crashed. Another server is
+> elected as the new leader. Then, why the new leader could receive the
+> same request again?
+
+If the client doesn't get a response from its original request, its RPC
+will time out, and it will re-send the request to a different server.
+
+
+> I'm still kind of confused about the safety gaurentees of Raft. If
+> some server crashes right after receiving a request, before it commits
+> it, and after another term passed and the server restarts, this server
+> has log that is not up-to-date compared with the other servers, so it
+> cannot be the leader. And data cannot flow from follower to leader, so
+> the new leader will never know about this request, and this request is
+> permenently lost. Is it the case?
+
+If a log entry isn't committed, Raft may not preserve it across a leader change.
+
+That's OK because the client could not have received a reply to its
+request if Raft didn't commit the request. The client will know (by
+seeing a timeout or leader change) that its request wasn't served, and
+will re-send it.
+
+> How would Raft handle the split brain problem? That is, two groups of
+> servers are disconnected from each other. Would each group elects a
+> leader and would there be two leaders in total?
+
+There can be at most one active leader.
+
+A new leader can only be elected if it can contact a majority of servers
+(including itself) with RequestVote RPCs. So if there's a partition, and
+one of the partitions contains a majority of the servers, that one
+partition can elect a new leader. Other partitions must have only a
+minority, so they cannot elect a leader. If there is no majority
+partition, there will be no leader (until someone repairs the network
+partition).
+
+Suppose a new leader is elected while the network is partitioned. What
+about the previous leader -- how will it know to stop committing new
+entries? The previous leader will either not be able to get a majority
+of true responses to its AppendEntries RPCs (if it's in a minority
+partition), or if it can talk to a majority, that majority must overlap
+with the new leader's majority, and the servers in the overlap will tell
+the old leader that there's a higher term. That will cause the old
+leader to switch to follower.
+
+> I have a question similar to the one for the reading. Suppose we have a
+> situation similar to Figure 7 in the paper, but we also had a network
+> partition such that the two halves of the seven-node network would have three
+> servers each. Because neither partition can obtain a majority, no one can be
+> elected leader. Assuming the 7th server never comes back online (or at least
+> it takes a very long time), is there a way for raft to change the number of
+> servers in the network, or at the very least notify a sysadmin that no
+> progress is being made?
+
+Raft cannot do anything without a majority. The reason is that if a minority of
+servers were allowed to do anything, then two minorities in different partitions
+could do that thing. We would not want the two minorities in two different
+partitions to both decide to reduce the number of servers, since then they would
+be able to operate without knowing about each other, causing split brain.
+
+A sysadmin could easily notice that the Raft-based service was no longer
+responding. Perhaps the sysadmin could pick one of the minority partitions,
+hopefully the most up to date one, and allow it to continue by telling it to
+reduce the total set of servers. Raft doesn't support this, but you could
+imagine modifying it to do so. However, the sysadmin would have to make a
+complex decision here, and it would be error-prone.  It would be better for the
+sysadmin to fix the network partition, allowing Raft to continue as designed.
+
+
+> In figure 7, it seems that because f will never be elected leader, the logs
+> that only it has i.e. all the logs from term 2, will be forever lost because
+> that worker will have to overwrite them. Is this correct, and if so, is this
+> not a concern of Raft?
+
+That's correct. The log entries in question could not have been committed (they
+are not on a majority of servers), so the client could not have received a reply
+to the requests. The client will eventually notice a change in leader, or time
+out its RPCs, and re-send the requests to the new leader.
+
+> What prevents a leader from never overwriting or deleting any of its logs?
+
+The leader follows the rules in Figure 2. Nothing in Figure 2 will cause a
+leader to delete anything from its own log.
+
+> How exactly does a candidate become eligible to receive votes from
+> other servers. How do follower servers know when and who to vote for?
+
+Candidates send RequestVote RPCs to all the servers. Each server votes
+yes or no for each RequestVote it receives, according to the algorithm
+under RequestVote RPC in Figure 2.
+
+> I understand that it's on a first come first serve basis, but do
+> candidates announce their candidacy to other servers to receive votes?
+
+A candidate sends out RequestVote RPCs; this implicitly announces its
+candidacy.
+
+> How reliable is it the safety assumption that electionTimeout will be
+> an order of magnitude greater than broadcastTime, and an order of
+> magnitude less than MTBF?
+
+A bad choice of election timeout does not affect safety, it only affects
+liveness.
+
+Somebody (the programmer?) has to choose the election timeout. The
+programmer could easily choose a value that's too large or too small. If
+too small, then followers may repeatedly time out before the leader has
+a chance to send out any AppendEntries. In that case Raft may spend all
+its time electing new leaders, and no time processing client requests.
+If the election timeout is too large, then there will be a needlessly
+large pause after a leader failure before a new leader is elected.
+
+> Could you explain more about how Raft recovers from a network
+> partition e.g. when there are a 3-way partition where none of the
+> partitions contains a majority of servers?
+
+In such a partition, Raft won't be able to elect any leader, and thus
+won't serve any client requests. The Raft servers will try again and
+again to elect a leader, never succeeding.
+
+If someone fixes the network so that the partition goes away, and a
+majority of servers can talk to each other, then an election will
+succeed, and Raft will start being able to serve client requests again.
+
+> Why are retry timeouts to become a candidate randomized? Is it to
+> avoid a case in which two competing candidates start a term at the
+> same time and continue to do so, therefore blocking an election?
+
+That's exactly right.
+
+> In the election restriction part, how to define "majority of the
+> cluster" that a candidate needs to contact?
+
+By "majority", the paper means more than half of the total set of
+servers.
+
+> If it's more than half, then for the paper question, server (a) might
+> also be elected
+
+I agree.
+
+> however, its does not contains all commited entries (term 7).
+
+The entries in term 7 cannot have been committed because they are not
+present on a majority of the servers. A leader only commits a log entry
+if it receives positive replies to its AppendEntries from a majority of
+the servers.
+
+> If a network partition is never resolved can the two sides of the
+> partition realize that the number of nodes for majority is different
+> and elect new leaders at that point?
+
+I think you are suggesting that there be two leaders, each with its own
+smaller majority. This can't be allowed because it will violate the goal
+that the replicated service look to clients as if it were an ordinary
+non-replicated service. That is, it will produce a "split brain".
+
+Suppose the service is a key/value database. If clients A and B perform
+the following sequence of puts/gets, one at a time, we'd expect the
+final get("key1") to yield "value2".
+
+Client A: put("key1", "value1")
+Client B: put("key1", "value2")
+Client A: get("key1") -> ???
+
+However, if there are two leaders that both think they have majorities,
+and client A talks to one leader and client B talks to the other, then
+client A won't see client B's put value, and the last get will yield
+"value1". That's not legal, since it could not happen in a
+non-replicated single server setup.
+
+> Step 6 in section 5.4.3 of the safety proof is a little unclear to me.
+> If leader u shared the same last term as the voter's why does it have
+> to have its log at least as long as the voter's?
+
+Step 2 says the voter has the committed log entry in question, and that
+the voter was part of the majority that voted for leader_u. The election
+restriction rule (Section 5.4.1) says that if the voter and candidate's
+last log terms are equal, the voter will only vote "yes" if the
+candidate's log is at least as long as the voter's. Since each term has
+only one leader, and that leader sends out only one sequence of log
+entries for that term, the fact that the leader's log is longer and has
+the same last term as the voter's log implies that the leader's log
+contains all the entries in the voter's log for that term. Including the
+committed entry in question.
+
+(f) in Figure 7 is a different situation, because (f) has a different
+last term in its log than the new leader.
+
+> If a new server is added, how is the current state of the rest of the
+> machines safely replicated on to this new server?
+
+The mechanism turns out to the the same one that brings lagging
+followers up to date with the leader. When the new server joins, it will
+reject the first AppendEntries it receives from the leader, because the
+new server's log is empty (step 2 under AppendEntries RPC in Figure 2).
+Then the leader will reduce its nextIndex[i] for the new server until it
+is 0. Then the leader will send the new server the entire log with
+AppendEntries.
+
+> What exactly do the C_old and C_new variables in section 6 (and figure
+> 11) represent? Are they the leader in each configuration?
+
+They are the set of servers in the old/new configuration.
+
+> Is there a way to resolve multiple leader servers going down
+> sequentially, and deadlocking the entire system? Is it just a
+> probablistic that this wouldn't happen, so such scenarios are
+> impossible?
+
+Is the case you have in mind that a majority of the servers die, so that
+an election can't succeed? Indeed, Raft won't make any progress in this
+situation. If this happens a lot, the only way to really solve it is to
+get more reliable servers.
+
+> In figure 2 the authors say that the rules "trigger independently and repeatedly".
+> Is this the same thing as asynchronously?
+
+In a real implementation you'd likely check for the rules at points in your
+code (e.g. RPC handlers) that change the relevant state. You'll also
+need one or more independent threads that execute things like timeouts
+that aren't in response to a specific change in Raft's state.
+
+> If so, wouldn't execution be serialized
+> around the lock to raft's state?
+
+Yes.
+
+
+> Could the implementation of raft be further simplified by setting up a
+> concrete scheduling loop for events?
+>
+> Sort of like:
+>
+> func Schedule() {
+> //events are polled for instead of interrupting the state machine
+> for {
+> AppendEntries ? -> do append() //state changes happen inside these functions
+> AppendEntriesReply ? -> do append_reply()
+> ElectionTimeout ? -> do start_election()
+> VoteRequest ? -> do vote_response()
+> VoteRequestReply ? -> do process_vote_reply()
+> ... // you get it
+> }
+> }
+>
+> I imagine that even if all the events triggered asynchronously, then it is possible
+> for an event schedule like the one above to happen. The question is whether all
+> possible event schedules can happen with asynchronous triggers.
+
+This seems reasonable. Presumably the RPC handlers would send a message
+on the AppendEntries channel &c? In my implementation I basically
+directly call do append_reply() from the RPC handler, and don't have
+anything equivalent to Schedule(). I have a separate goroutine for
+election timeouts, and a separate goroutine to decide when log entries
+have committed and send them on the applyCh.
+
+> How does raft handle new servers joining the cluster?
+
+Have a look at the paper's Section 6.
+
+> Can a candidate declare itself the leader as soon as it receives
+> majority vote and discard the remaining votes?
+
+Yes -- a majority is sufficient.
+
+> Or would it create problems because it might learn of another server
+> with higher term in one of the remaining votes.
+
+It could indeed learn of a leader with a higher term, but the protocol
+deals correctly with this. Any such new leader would itself have
+collected a vote from a majority, and that majority would know of the
+new higher term number. The leader with the lower term can only modify
+the log if a majority accept its AppendEntries RPCs -- but they won't
+since at least one server out of any majority will know of the higher
+term of the newer leader.
+
+
+> Do leaders in raft ever stop being a leader outside of crashing?
+
+Yes. If a leader's network connection breaks, or loses too many packets,
+the other servers won't see its AppendEntries RPCs, and will start an
+election. Similarly if the leader or network is too slow.
+
+> If not, would this possibly cause problems with load balancing if we
+> had multiple disjoint services on top of the same cloud and all of the
+> leaders happen to converge on one server?
+
+You'd need a mechanism outside of Raft to manage this. But that
+mechanism could easily enough ask a Raft leader to step down.
+
+> How do log entries get handled during elections? With no clear leader,
+> how do none of the log entries get lost?
+
+During an election the servers don't do anything to their logs, so
+nothing is lost.
+
+After a leader is elected, the leader may ask followers to roll back
+their logs so that they become identical to the leader's log. But the
+algorithm for this guarantees never to discard a committed log entry, so
+nothing valuable will be lost.
+
+> When are followers' log entries sent to their state machines? A
+> follower may have a given set of log entries, but they may be changed
+> when a new leader emerges and there is inconsistency.
+
+Only after the leader says that an entry is committed. Raft never
+changes its mind about committed log entries.
+
+> The paper states that the leader never responds to a client until
+> after the entry is applied to the state machine. How long does this
+> typically take? Does this delay in latency create any problems?
+
+It depends on the service. If it's a database that stores its data on
+disk, and the client asked to write the data, the write might take a few
+tens of milliseconds. But that's more or less the same delay as the
+service would impose without Raft, so presumably it's OK.
+
+> If elections happen relatively often, then the server will keep being
+> unavailable for tiny gaps of time pretty often. Does that performance
+> hit really go unnoticed by clients?
+
+Clients will notice -- they will see delays, and have to re-send
+requests if they originally sent them to a failed leader. But elections
+should only happen when servers fail or are disconnected. Without Raft
+(or something like it), clients wouldn't get any service at all when
+there are failures. Raft makes things strictly better by continuing
+despite some kinds of failures, though indeed after an election delay.
+
+> One thing that I was unclear on when reading and working on the lab is
+> if when a leader sends an appendEntries RPC, if it waits for every RPC
+> to finish (either successfully or not), simply waits for a majority,
+> or neither.
+
+The leader shouldn't really wait. Instead, it should send the
+AppendEntries RPCs and continue. It should also look at each reply to
+its RPCs for a particular log entry, and count these replies, and mark
+the log entry as committed only when it has replies from a majority of
+servers (including itself).
+
+One way to do this in Go is for the leader to send each AppendEntries
+RPC in a separate goroutine, so that the leader sends the RPCs
+concurrently. Something like this:
+
+  for each server {
+    go func() {
+      send the AppendEntries RPC and wait for the reply
+      if reply.success == true {
+        increment count
+        if count == nservers/2 + 1 {
+          this entry is committed
+        }
+      }
+    } ()
+  }
+
+
+> What are the cases where a server may have more entries than the
+> leader, like the server (d) in Figure 7?
+
+(d) could have been the leader previously, for term 7, as you point out.
+It's also possible that some other server (?) was leader for term 7,
+that only (d) heard new log entries from (?), and that after a leader
+change the new leader caused (?) to roll back its uncommitted entries
+for term 7 but didn't get around to asking (d) to roll back.
+
+> Also another question is, is it true that in a leader's log, there
+> will be entires that are just replicated to the other servers but not
+> committed.
+
+Yes.
+
+> And this is fine because the client will not receive any output for
+> these uncommitted commands.
+
+Yes.
+
+> And these only happens when a leader is elected, and it has entires
+> from its old term that hasn't been replicated to all the other
+> servers?
+
+The leader can also have uncommitted entries in its log because it
+hasn't heard AppendEntries RPC replies from a majority yet.
+
+> I’m a little confused with regards to this question: it
+> seems the committed entries are 111445566, because a majority of the
+> servers have these entries. Server (a) has these entries, but only it
+> and (b) would vote for it, because (c) and (d) have newer entries and
+> wouldn’t vote, as I understand it. But shouldn’t
+> it technically be allowed to win, since it has all the committed
+> entries?
+
+I think server (a) can get a majority, since (a), (b), (e), and (f)
+will vote for it.
+
+> What happens if more than half of the servers die? (I also asked this
+> on Piazza)
+
+The service can't make any progress; it will keep trying to elect a
+leader over and over. If/when enough servers come back to life with
+persistent Raft state intact, they will be able to elect a leader and
+continue.
+
+> Raft does ensure consistency eventually, but aren't there lots of
+> practical examples where discrepancies between the logs can cause
+> useful data to be erased?
+
+The only log entries that will be erased correspond to client requests
+where the service never replied to the client (since the request never
+committed). Such clients will re-send their requests to a different
+server until they find the current Raft leader, which (if there are no
+more failures) will commit the requests into the log, execute them, and
+reply to the client. So in the end nothing will be lost.
+
+> When sending a requestVote message to another server, if the sent
+> message has higher term than the term of the receiving server, does
+> the receiving server increase its term to match taht of the sent
+> message?
+
+Yes. You can see this near the top of Rules for Servers in Figure 2.
+
+
+> Why do they choose to first index the log? Would it be problematic if
+> the log were zero indexed instead?
+
+It's just a convenience. I suspect the authors' implementation actually
+has an entry 0 in the log array, with Term=0. That allows the very
+first AppendEntries RPC to contain 0 as PrevLogIndex, and be a valid
+index into the log. I think it would be easy to modify the protocol to
+have a zero-indexed log, and change the various places that use 0 to
+mean "before the first log entry" to use -1 instead.
+
+> Would another alternative be to not allow a single server be the leader for too many
+> terms? Therefore, this would prevent certain servers from being a leader for too long
+> in case one is malicious.
+
+I'd worry that if a server is malicious, it can do as much damage as it
+likes in a short time.
+
+> In a replicated state machine model, the state machine reads from the
+> log on each replicated server. However, if some problem occurs from
+> the consensus module when sending commands to the logs, couldn't this
+> result in differing states? Why can't we have the state machines from
+> the different servers instead read from one log, thereby guaranteeing
+> the state will be consistent across all servers? One argument is fault
+> tolerance, in which case we can keep 2 or 3 backup logs that replace
+> the original if the original is lost for any reason. After reading
+> more of the paper, it seems that the point is that by using the
+> leader-follower model, we can guarantee consistency to a point between
+> servers. However, this seems like a more complicated and more
+> error-prone way.
+
+Raft basically does what you suggest, but it turns out to be fairly
+complex. Raft keeps one main copy of the log (in the leader), and also
+some backup copies of the log (in the followers). It uses the leader's
+copy of the data to answer client requests if the leader is alive, and
+switches to a backup if soemthing goes wrong. We can't expect the copies
+of the log to be identical at all times, since some of the servers may
+be crashed or have broken network connections. Much of the complexity in
+Raft has to do with maintaining correctness despite log copies that may
+not be exactly identical.
+
+> When choosing a leader in a given term, why not settle split votes
+> randomly, or give the servers integer ids and choose the server with
+> the highest id (similar to ranking idea, but only in the case of split
+> votes)?
+
+You could probably make elections based on these ideas work. The authors
+tried at least one approach like this (ranking), but note that it is
+more complex. If elections happened very frequently, and were often
+split, it might be worth designing a more complex but faster scheme.
+
+> Isn't it a waste to not choose a leader for a term?
+
+Yes; it means that sometimes elections take a few hundred milliseconds
+longer than strictly neccessary (an extra election timeout). But
+elections only happen after failures, which can't be very frequent if
+the system is to get any work done. So the fact that elections might
+sometimes take longer than necessary is probably not a very significant
+factor in overall system performance.
+
+> It is even admitted in the paper that elections could potentially
+> happen indefinitely (although unlikely due to randomized election
+> timeouts).
+
+This can only happen if the servers repeatedly pick random election
+timeouts that happen to be the same for multiple servers. This could
+happen, but it's like rolling a dice many times and getting the same
+number every time -- possible, but the probability gets small rapidly as
+you roll more times.
+
+> I may be understanding something wrong, but the paper says that RAFT
+> prevents a server from being elected if it does not have all committed
+> entries. However, it seems from the exercise that server "a" could be
+> elected without having all the committed entries. What am I missing?
+
+I believe server "a" has all of the entries that could have committed.
+
+Are you thinking about the "6" entries that "c" and "d" have that are
+beyond the end of "a"'s log? These cannot have been committed. In order
+for the leader who sent those "6" entries out to have committed them,
+that leader would have had to get positive replies from a majority
+(including itself), which is 4 of the 7 servers. But those "6" entries
+are only on three servers, so apparently that leader didn't get a
+majority, so it didn't commit them.
+
+> What happens if a leader election is necessary (the current leader
+> fails) and there are no followers whose logs are entirely committed,
+> what happens in the election?
+
+If a majority of servers is alive and can talk to each other, they will
+elect a leader. The elected leader will be have a log at least as up to
+date as any of the servers in its majority (this is the election
+restriction in Section 5.4.1).
+
+The elected leader may have entries at the end of its log that are not
+committed, perhaps because it was the only server to receive those
+entries from the previous leader. It will send those entries to the
+followers, and the entries will become committed as soon as the leader
+manages to commit an entry from the current term (see Section 5.4.2).
+
+
+> Is it always true that if a follower contains log entries that the
+> current leader does not have, then those log entries will eventually
+> be deleted? My understanding is that the leader will try to force the
+> follower’s log to conform to the leader’s log,
+> and so the disagreeing entries will be erased.
+
+Yes -- as soon as the new leader commits any new entry, it will tell the
+follower with conflicting log entries to delete them and replace them
+with the leader's log entries.
+
+> However, what happens to these entries that are erased? Are they not
+> important to the client, and does the system not notify the client
+> that some actions failed to take place?
+
+The follower will delete the log entries without notifiying the client.
+The reason this is OK is that the entries could not have been committed,
+so whatever leader the client sent the RPCs to could not have replied to
+the RPCs, so the client could not have thought the RPCs had succeeded.
+The client probably timed out and re-sent the RPCs to a new leader.
+
+
+> In Figure 7, how does a machine get extra uncommitted logs?
+
+Example: server (c)'s last log entry is uncommitted, since it doesn't
+exist on a majority of servers. This could have happened because server
+(c) was the leader for term 6, and lost leadership (perhaps crashed)
+after sending itself a command for log index 11 but before sending it to
+any other server.
+
+> Is it possible that none of the nodes satisfy the election
+> restriction? i.e. they have all the committed logs? I guess it's true
+> because the 3 properties guarantee the followers would only accept a
+> new log when all of its previous entries are correct and the latest
+> entry will only be committed when there is at least one "good"
+> follower? I'm not sure though.
+
+I believe that at least one server always satisfies the "at least as
+up-to-date" rule described at the end of 5.4.1. It's true that two
+servers might have the same last term and the same length log, but then
+either of them is allowed to be leader.
+
+> Also, when network partition happens, if the clients send commands to
+> different networks, wouldn't these sent to the "smaller" groups be
+> lost? I guess in that case, the client can send again but I'm not
+> sure.
+
+Yes, only the partition with a majority of servers can commit and
+execute client operations. The servers in the minority partition(s)
+won't be able to commit client operations, so they won't reply to client
+requests. Clients will keep re-sending the requests until they can
+contact a majority Raft partition.
+
+> Even with the authors' explanation, I still cannot fully understand
+> Figure 7. In that situation, why could server (c) and server (c) have
+> extra uncommitted entries?
+
+Server (c)'s last log entry is uncommitted, since it doesn't exist on a
+majority of servers. This could have happened because server (c) was the
+leader for term 6, and lost leadership (perhaps crashed) after sending
+itself a command for log index 11 but before sending it to any other
+server.
+
+Server (d) was probably the leader for term 7, and sent itself two
+commands (log indices 11 and 12), but crashed before sending the
+commands to any other server.
+
+> One more question about "majority":
+>
+> For example, there are 8 servers. Server A is the elected leader and
+> the rest are followers. If something bad happened and 4 followers
+> crashed and they will never send message back to the leader. There are
+> only 3 followers left. I think even Server A gets all the response
+> from the remaining followers, the number is still less than the
+> "majority". In this way, the leader will never get more committed
+> entries. What can Raft do in this situation?
+
+At least a majority (5 servers) have to be alive and in communication in
+order for Raft to make progress. In this situation, the 4 live servers
+will repeatedly attempt to elect a leader, and fail (since there is no
+majority). If one of the 4 crashed servers reboots, then there will be a
+majority, and Raft will elect a leader and continue.
+
+> Sections 1 to 5 look very straight-forward. How do we know the
+> argument on 5.4.3 complete for proving properties? It seems logical
+> but I am not sure if the argument covers all the possible cases.
+
+5.4.3 is not a complete proof. Here are some places to look for something
+more complete:
+
+http://ramcloud.stanford.edu/~ongaro/thesis.pdf
+http://verdi.uwplse.org/raft-proof.pdf
